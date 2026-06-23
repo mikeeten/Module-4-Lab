@@ -13,12 +13,13 @@ builder.Services.AddAuthorization();
 
 
 var app = builder.Build();
+app.UseMiddleware<RequestLoggingMiddleware>(); 
 
-
-// app.UseExceptionHandler();
+app.UseExceptionHandler("/error");
 app.UseRouting();
 app.UseAuthentication();   // establish identity
 app.UseAuthorization();    // enforce policies
+
 
 
 app.MapGet("/api/assessments/results", () => Results.Ok(new
