@@ -1,112 +1,61 @@
-# Exercise 2: The Memory Leak (Captive Dependencies)
+# Exercise 3: The Silent Crash (Options Pattern)
+Context: The TMS relies on an external payment gateway for tuition processing
+(measured in Ethiopian Birr). The appsettings.json is missing the GatewayUrl key. Because the previous developer used IConfiguration["GatewayUrl"] inline during checkout, the application runs perfectly until a student tries to pay, throwing a massive server
 
-Context: The TMS has a background worker that recalculates scholarships every hour. The server crashed with an OutOfMemoryException. The investigation traced the crashtoa Scoped service (IEnrollmentService) being held by a Singleton (EnrollmentWorker) a captive dependency. 
 
-# Quick reference the three lifetimes
+error.[!CAUTION] Think about this before coding: If an application is missing a
+critical configuration setting, is it better for it to crash entirely upon startup, or
+crash later when a user tries to use the specific feature?
 
-* **Transient:** New instance every time it is resolved.
-* **Scoped:** One instance per HTTP request; disposed when the request ends.
-* **Singleton:** One instance for the entire application lifetime.
+# Your Task: Validate Configuration at Startup
+### Exercise 3: The Silent Crash (Options Pattern)
 
-If a Scoped service (for example something that should track this request’s enrollments)
-is captured inside a Singleton, it can live across requests. Under load, connections or in- memory state leak or go stale another request may see the wrong student’s data.
-Prerequisite (read once): Many HTTP requests can be in flight at the same time. Eachrequest should get its own scoped services. A singleton lives forever it must not keepareference to a scoped instance created for an old request.
+**Context:** The TMS relies on an external payment gateway for tuition processing (measured in Ethiopian Birr). The `appsettings.json` is missing the `GatewayUrl` key. Because the previous developer used `IConfiguration["GatewayUrl"]` inline during checkout, the application runs perfectly until a student tries to pay, throwing a massive server error.
 
-# First, make the failure visible
+> [!CAUTION]
+> **Think about this before coding:** If an application is missing a critical configuration setting, is it better for it to crash entirely upon startup, or crash later when a user tries to use the specific feature?
 
 > [!NOTE]
-> **Step A: Buggy registration (temporary)**
+> **Your Task: Validate Configuration at Startup**
 > 
-> Implement `EnrollmentWorker` so its constructor takes `IEnrollmentService` directly (not `IServiceScopeFactory` yet).
+> Build a strongly-typed options class and wire it so the app refuses to start with invalid configuration.
+> 
+> **Class Setup:**
+> ```csharp
+> // TODO 1: Create a class called PaymentOptions with two properties:
+> // - GatewayUrl (string, required use [Required] attribute)
+> // - MaxDepositBirr (decimal, range 100-100000 use [Range] attribute)
+> 
+> public class PaymentOptions 
+> { 
+>     [Required] 
+>     public required string GatewayUrl { get; init; }
+>     
+>     [Range(100, 100000)]
+>     public decimal MaxDepositBirr { get; init; }
+> }
+> ```
 > 
 > **Service Registration:**
 > ```csharp
-> builder.Services.AddSingleton<EnrollmentWorker>();
-> builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
+> // TODO 2: In Program.cs, bind PaymentOptions to the "Payments" section of appsettings.json
+> // and enable startup validation. 
+> 
+> builder.Services.AddOptions<PaymentOptions>()
+>     .BindConfiguration("Payments")
+>     .ValidateDataAnnotations()
+>     .ValidateOnStart();
 > ```
 > 
-> **Host Validation Setup:**
-> Add host validation so the container catches illegal lifetime wiring early:
-> ```csharp
-> builder.Host.UseDefaultServiceProvider(options =>
-> {
->     options.ValidateScopes = true;
->     options.ValidateOnBuild = true;
-> });
-> ```
-> 
-> **Execution:**
-> `dotnet run`
+> **Testing Phase:**
+> * **TODO 3:** Delete the "Payments" section from `appsettings.json` and run the app. 
+> * What error do you see? Does the app start or crash immediately?
 
-Expected (the “good” failure): The app throws at startup or on first resolve with anerror similar to:
-Cannot consume scoped service 'IEnrollmentService' from singleton 'EnrollmentWorker'. That message IS the captive dependency detector working. Read it carefully it names
-the two lifetimes that clash. Step B Confirm the failure: If the app refused to start in Step A, that IS the expectedfailure. Read the error message carefully it names both lifetimes. Skip ahead to “Your
-Task” below.
-If the app somehow started (unlikely with ValidateOnBuild = true), add this smoke-test
-route to Program.cs and run concurrent requests to expose the bug:
-
-> [!NOTE]
-> **Worker Smoke Test Endpoint & Parallel Verification**
-> 
-> Add this endpoint to your API setup:
-> ```csharp
-> app.MapGet("/api/enrollments/worker-smoke", (EnrollmentWorker worker) =>
-> {
->     worker.ProcessBatch();
->     return Results.Ok("processed");
-> });
-> ```
-> 
-> **Execution via PowerShell:**
-> Run this parallel script block from your PowerShell terminal (replace the base URL with yours from `dotnet run`):
-> ```powershell
-> \$base = "http://localhost:5000" # or https://localhost:7xxx match your terminal
-> 1..15 | ForEach-Object -Parallel {
->     Invoke-WebRequest -Uri "\$using:base/api/enrollments/worker-smoke" -UseBasicParsing | Out-Null
-> } -ThrottleLimit 15
-> ```
-
-
-
-Expected: Exceptions or inconsistent data under parallel calls the scoped service is beingshared across requests. Troubleshooting: If nothing fails, confirm ValidateScopes = true is set. If the app refuses tostart after the singleton registration, that IS the expected failure proceed to the fix below. 
-
-# Your Task: Fix the Captive Dependency
-
-Inject IServiceScopeFactory into the singleton and create a short-lived scope each timethe worker runs. Resolve IEnrollmentService from that scope only. 
-
-> [!NOTE]
-> **Step B: Safe Singleton Dependency Resolution via IServiceScopeFactory**
-> 
-> **Service Registrations:**
-> These registrations are given; do **NOT** change them:
-> ```csharp
-> builder.Services.AddSingleton<EnrollmentWorker>();
-> builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
-> ```
-> 
-> **Implementation inside `EnrollmentWorker.cs`:**
-> ```csharp
-> public class EnrollmentWorker(IServiceScopeFactory scopeFactory)
-> {
->     public void ProcessBatch()
->     {
->         // TODO 2: Create a short-lived scope using the injected factory. 
->         // Stuck? using var scope = scopeFactory.CreateScope();
-> 
->         // TODO 3: Resolve the scoped service from the new scope's provider. 
->         // Stuck? var svc = scope.ServiceProvider.GetRequiredService<IEnrollmentService>();
-> 
->         // TODO 4: Use the service, then let the 'using' block dispose the scope
->         // and its scoped services automatically. 
->     }
-> }
-> ```
-
-# Run / Call / Expected / Common failure
- **Run / verify / common failure**
-  * **Run:** `dotnet run` after implementing `IServiceScopeFactory`.
-  * **Call:** Same as Step A or B startup should succeed; if you have `worker-smoke`, run the PowerShell parallel block again.
-  * **Expected after fix:** No `Cannot consume scoped service…` at startup; under parallel calls, behavior is stable (no cross-request stale state for scoped work done inside `ProcessBatch`).
-  * **Common failure:** Forgetting `using` on the scope—scoped services never dispose.
-  * **Common failure:** Resolving `IEnrollmentService` from the root `app.Services` inside the singleton is still wrong. Always `CreateScope()` first.
-
+* **Run / Call / Expected / Common failure**
+  * **Run:** `dotnet run` after removing or commenting out the entire "Payments" section in `appsettings.json` (or removing `GatewayUrl` only, if your validators require it).
+  * **Call:** None (failure happens directly at startup).
+  * **Expected:** Process does not stay running; console shows something like:
+    ```text
+    Microsoft.Extensions.Options.OptionsValidationException: DataAnnotation validation failed for 'PaymentOptions': 'The GatewayUrl field is required.'
+    ```
+  * **Common failure app starts anyway:** `.ValidateOnStart()` is missing, or options are not bound to "Payments", or the section name in JSON does not match `.BindConfiguration("Payments")`.
