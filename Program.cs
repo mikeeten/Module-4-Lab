@@ -21,7 +21,6 @@ builder.Host.UseDefaultServiceProvider(options =>
 });
 
 
-
 var app = builder.Build();
 app.UseMiddleware<RequestLoggingMiddleware>(); 
 
@@ -40,3 +39,4 @@ app.MapGet("/api/assessments/results", () => Results.Ok(new
 })).RequireAuthorization(); 
 
 app.Run();
+
