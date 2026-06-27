@@ -16,8 +16,11 @@ builder.Services.AddOptions<PaymentOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
-builder.Services.AddSingleton<EnrollmentWorker>();
-builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
+builder.Services.AddSingleton<IEnrollmentService, EnrollmentService>();
+// builder.Services.AddSingleton<EnrollmentWorker>();
+// builder.Services.AddScoped<IEnrollmentService, EnrollmentService>();
+
+builder.Services.AddControllers();
 
 builder.Host.UseDefaultServiceProvider(options =>
 {
@@ -34,7 +37,7 @@ app.UseRouting();
 app.UseAuthentication();   // establish identity
 app.UseAuthorization();    // enforce policies
 
-
+app.MapControllers();
 
 app.MapGet("/api/assessments/results", () => Results.Ok(new
 {
