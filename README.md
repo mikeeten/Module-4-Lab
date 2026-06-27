@@ -1,61 +1,88 @@
-# Exercise 3: The Silent Crash (Options Pattern)
-Context: The TMS relies on an external payment gateway for tuition processing
-(measured in Ethiopian Birr). The appsettings.json is missing the GatewayUrl key. Because the previous developer used IConfiguration["GatewayUrl"] inline during checkout, the application runs perfectly until a student tries to pay, throwing a massive server
+### Exercise 4: The Unsearchable Logs (Structured Logging)
 
+**Context:** A student complained that their grade was not saved. The IT team searched Application Insights for logs, but could not filter by the student’s ID because the logs were written as raw concatenated strings. 
 
-error.[!CAUTION] Think about this before coding: If an application is missing a
-critical configuration setting, is it better for it to crash entirely upon startup, or
-crash later when a user tries to use the specific feature?
+The difference between searchable and unsearchable logs comes down to one core development habit:
 
-# Your Task: Validate Configuration at Startup
-### Exercise 3: The Silent Crash (Options Pattern)
+**Anti-Pattern (Do NOT use):**
+```csharp
+// BAD: one concatenated blob, not queryable
+logger.LogInformation("Enrolling student " + studentId + " in course " + course);
+```
 
-**Context:** The TMS relies on an external payment gateway for tuition processing (measured in Ethiopian Birr). The `appsettings.json` is missing the `GatewayUrl` key. Because the previous developer used `IConfiguration["GatewayUrl"]` inline during checkout, the application runs perfectly until a student tries to pay, throwing a massive server error.
-
-> [!CAUTION]
-> **Think about this before coding:** If an application is missing a critical configuration setting, is it better for it to crash entirely upon startup, or crash later when a user tries to use the specific feature?
+**Structured Pattern (Always use):**
+```csharp
+// GOOD: StudentId and Course become queryable properties in any log aggregator
+logger.LogInformation("Enrolling student {StudentId} in course {Course}", studentId, course);
+```
 
 > [!NOTE]
-> **Your Task: Validate Configuration at Startup**
+> **Your Task: Audit and Fix EnrollmentService Logging**
 > 
-> Build a strongly-typed options class and wire it so the app refuses to start with invalid configuration.
+> Open `EnrollmentService.cs`. The `EnrollAsync` method already uses structured logging. Now apply the same discipline across the service and add proper log levels.
 > 
-> **Class Setup:**
+> **1. Add a LogWarning to `EnrollAsync` for duplicate checks:**
 > ```csharp
-> // TODO 1: Create a class called PaymentOptions with two properties:
-> // - GatewayUrl (string, required use [Required] attribute)
-> // - MaxDepositBirr (decimal, range 100-100000 use [Range] attribute)
-> 
-> public class PaymentOptions 
-> { 
->     [Required] 
->     public required string GatewayUrl { get; init; }
+> public Task<EnrollmentRecord> EnrollAsync(string studentId, string courseCode)
+> {
+>     // Check for duplicate enrollment
+>     var existing = _store.Values
+>         .FirstOrDefault(e => e.StudentId == studentId && e.CourseCode == courseCode);
+>         
+>     if (existing is not null)
+>     { 
+>         _logger.LogWarning("Duplicate enrollment attempt {StudentId} already in {CourseCode} (record {EnrollmentId})", studentId, courseCode, existing.Id);
+>         return Task.FromResult(existing);
+>     }
 >     
->     [Range(100, 100000)]
->     public decimal MaxDepositBirr { get; init; }
+>     var id = Guid.NewGuid().ToString("N")[..8];
+>     var record = new EnrollmentRecord(id, studentId, courseCode, DateTime.UtcNow); 
+>     _store[id] = record; 
+>     
+>     _logger.LogInformation("Enrolled {StudentId} in {CourseCode} record {EnrollmentId}", studentId, courseCode, id);
+>     return Task.FromResult(record);
 > }
 > ```
 > 
-> **Service Registration:**
+> **2. Add a LogWarning to `GetByIdAsync` when the record does not exist:**
 > ```csharp
-> // TODO 2: In Program.cs, bind PaymentOptions to the "Payments" section of appsettings.json
-> // and enable startup validation. 
-> 
-> builder.Services.AddOptions<PaymentOptions>()
->     .BindConfiguration("Payments")
->     .ValidateDataAnnotations()
->     .ValidateOnStart();
+> public Task<EnrollmentRecord?> GetByIdAsync(string id)
+> { 
+>     _store.TryGetValue(id, out var record);
+>     if (record is null)
+>     { 
+>         _logger.LogWarning("Enrollment {EnrollmentId} not found", id);
+>     }
+>     return Task.FromResult(record);
+> }
 > ```
 > 
-> **Testing Phase:**
-> * **TODO 3:** Delete the "Payments" section from `appsettings.json` and run the app. 
-> * What error do you see? Does the app start or crash immediately?
+> **3. Add structured logging to `DeleteAsync`:**
+> ```csharp
+> public Task<bool> DeleteAsync(string id)
+> {
+>     var removed = _store.Remove(id);
+>     if (removed) 
+>     {
+>         _logger.LogInformation("Deleted enrollment {EnrollmentId}", id);
+>     }
+>     else
+>     {
+>         _logger.LogWarning("Delete failed: enrollment {EnrollmentId} not found", id);
+>     }
+>     return Task.FromResult(removed);
+> }
+> ```
+
+#### Log Level Decision Rules
+Use these architectural guidelines consistently throughout the TMS architecture:
+* **Information:** A business event completed successfully (e.g., enrollment created or deleted).
+* **Warning:** Something unexpected but recoverable happened (e.g., duplicate attempt or record not found).
+* **Error:** An operation failed completely and needs urgent attention (e.g., system exceptions or data corruption).
 
 * **Run / Call / Expected / Common failure**
-  * **Run:** `dotnet run` after removing or commenting out the entire "Payments" section in `appsettings.json` (or removing `GatewayUrl` only, if your validators require it).
-  * **Call:** None (failure happens directly at startup).
-  * **Expected:** Process does not stay running; console shows something like:
-    ```text
-    Microsoft.Extensions.Options.OptionsValidationException: DataAnnotation validation failed for 'PaymentOptions': 'The GatewayUrl field is required.'
-    ```
-  * **Common failure app starts anyway:** `.ValidateOnStart()` is missing, or options are not bound to "Payments", or the section name in JSON does not match `.BindConfiguration("Payments")`.
+  * **Run:** `dotnet run`, then call `POST /api/enrollments` twice with the same student and course variables (you will wire this endpoint in Session 3 / Exercise 5). For now, you can verify by calling the methods directly from a temporary test endpoint, or wait until Session 3.
+  * **Call:** Watch the application console telemetry output stream.
+  * **Expected:** The first execution logs `[Information] Enrolled S-001 in CS-101`. The second execution logs `[Warning] Duplicate enrollment attempt...`. A `GET` call requesting a non-existent identifier safely logs `[Warning] Enrollment xyz not found`.
+  * **Common failure (Concatenation):** Still seeing concatenated strings because you used `"Enrolling " + studentId` instead of the structured pattern token layout `"Enrolling {StudentId}", studentId`.
+  * **Common failure (Log Levels):** All output streams show `[Information]` because you omitted or forgot to map `LogWarning` inside your conditional edge-case blocks.
