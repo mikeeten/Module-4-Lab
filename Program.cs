@@ -1,6 +1,8 @@
 using TmsApi;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
+using Scalar.AspNetCore;
+
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -30,9 +32,23 @@ builder.Host.UseDefaultServiceProvider(options =>
     options.ValidateOnBuild = true;
 });
 
+builder.Services.AddOpenApi();
 
 var app = builder.Build();
 app.UseMiddleware<RequestLoggingMiddleware>(); 
+
+if (app.Environment.IsDevelopment())
+{
+    // Development: expose OpenAPI + Scalar explorer
+    app.MapOpenApi();
+    app.MapScalarApiReference();
+}
+else
+{
+    // Production: hide explorers, use exception handler
+    app.UseExceptionHandler();
+}
+
 
 app.UseExceptionHandler("/api/error");
 app.UseStatusCodePages();
