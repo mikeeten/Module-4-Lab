@@ -1,45 +1,67 @@
-### Exercise 6: The Consistent Fault (Standardized Error Handling)
+### Exercise 7: The Environment Toggle (Dev vs Prod)
 
-**Context:** When the API crashes, it currently returns a raw HTML error page. The TMS frontend needs structured JSON (RFC 9457 `ProblemDetails`) so it can show a helpful alert whether the failure was saving an Enrollment, publishing a Course outline, recording an Assessment attempt, or issuing a Certificate. 
+**Context:** In Development, you want rich diagnostics and an interactive API explorer. In Production, you must hide api explorers entirely and avoid leaking critical system stack traces to external clients.
 
-*Note: `UseStatusCodePages` is optional but recommended alongside `ProblemDetails`. It turns empty-body status codes (such as bare 404 responses) into the same consistent JSON shape.*
+#### Before You Code (Prerequisites)
+1. Install Scalar (required for `MapScalarApiReference`):
+   ```bash
+   dotnet add package Scalar.AspNetCore
+   ```
+2. Add the OpenAPI service registration and the Scalar namespaces to `Program.cs`:
+   ```csharp
+   using Scalar.AspNetCore;
+   
+   var builder = WebApplication.CreateBuilder(args);
+   
+   // ... your existing service registrations ... 
+   builder.Services.AddOpenApi(); // Required before MapOpenApi() will work
+   ```
+   *Warning: Without `AddOpenApi()`, calling `MapOpenApi()` later will throw an exception at application startup.*
 
 > [!NOTE]
-> **Your Task: Implement ProblemDetails Exception Handling**
+> **Your Task: Implement Environment-Aware Pipelines**
 > 
-> Configure your application pipeline to catch unhandled errors and format them into the RFC-compliant `ProblemDetails` JSON schema.
+> Configure your application pipeline to expose interactive documentation tools exclusively in the Development environment while locking down your Production configuration.
 > 
-> **1. Pipeline Configuration (`Program.cs`):**
-> Configure these settings within your application startup flow:
+> **Pipeline Configuration (`Program.cs`):**
 > ```csharp
-> // TODO 1: In the Builder section, add the ProblemDetails service
-> builder.Services.AddProblemDetails();
-> 
-> // TODO 2: In the Middleware section, use the Exception Handler
-> app.UseExceptionHandler();
-> 
-> // TODO 3 (optional alignment with Essentials): 
-> app.UseStatusCodePages();
-> ```
-> 
-> **2. Exception Class Definition:**
-> Add this custom exception class to your project (either in a new file or at the bottom of `EnrollmentService.cs`):
-> ```csharp
-> public class TmsDatabaseException(string message) : Exception(message);
-> ```
-> 
-> **3. Testing Endpoint Configuration:**
-> Wire this test route into your `Program.cs` file to verify the exception handling behavior:
-> ```csharp
-> // TODO 4: Map a test route '/api/error' that intentionally throws.
-> app.MapGet("/api/error", () =>
+> // TODO 1: Check if the app is running in Development mode. 
+> if (app.Environment.IsDevelopment()) 
+> { 
+>     // TODO 2: In Development only expose the OpenAPI document and an interactive API explorer. 
+>     // Use the built-in MapOpenApi() and MapScalarApiReference(). 
+>     app.MapOpenApi(); 
+>     app.MapScalarApiReference();
+> }
+> else
 > {
->     throw new TmsDatabaseException("Simulated database failure for ProblemDetails testing");
-> });
+>     // TODO 3: In Production use the exception handler middleware so stack traces
+>     // are never shown to external users. 
+>     app.UseExceptionHandler();
+> }
 > ```
+> 
+> **Testing & Verification Tasks:**
+> * **TODO 4:** Run your application in both environments and verify the behaviors listed in the execution sections below.
 
 * **Run / Call / Expected / Common failure**
-  * **Run:** Execute `dotnet run` in your terminal.
-  * **Call:** `GET http://localhost:5000/api/error` (or whatever path throws inside your test route).
-  * **Expected:** Response is a clean JSON payload containing at least `type`, `title`, `status`, and `detail` fields (RFC 9457 `ProblemDetails` shape) instead of a raw system stack trace rendered as HTML.
-  * **Common failure raw HTML:** `UseExceptionHandler()` is missing or registered after endpoint execution so exceptions never reach it. Place it before your routing/mapping middleware layers per your Essentials guidelines.
+
+  **Development Environment Verification:**
+  * **Run:** Execute `dotnet run` (the default value remains set to `Development` in your local `launchSettings.json`).
+  * **Call:** Open your browser and navigate to `http://localhost:5000/scalar/v1` (path may vary slightly depending on your template; use the link shown in your console if different).
+  * **Expected:** The interactive Scalar UI loads successfully and lists your available OpenAPI documentation endpoints.
+
+  **Production Environment Verification (Windows PowerShell):**
+  * **Run:** Force your shell session into Production mode and initialize the runtime:
+    ```powershell
+    \$env:ASPNETCORE_ENVIRONMENT = "Production"
+    dotnet run
+    ```
+  * **Call:** Try hitting the same Scalar documentation URL used above, and trigger an endpoint that intentionally throws an unhandled error (such as `/api/error`).
+  * **Expected:** The `/scalar/v1` route returns an HTTP `404 Not Found` response or is completely unexposed; unhandled errors safely return standard `ProblemDetails` JSON payloads instead of raw HTML stack traces.
+  * **Cleanup:** Reset your shell session variables when done testing:
+    ```powershell
+    Remove-Item Env:ASPNETCORE_ENVIRONMENT
+    ```
+
+  * **Common failure (Scalar does not compile):** The underlying dependency package was not added (`dotnet add package Scalar.AspNetCore`) or the namespace declaration `using Scalar.AspNetCore;` is missing from the top of your code file.
