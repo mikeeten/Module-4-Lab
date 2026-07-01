@@ -78,3 +78,4 @@ public Task<bool> DeleteAsync(string id)
 
 public record EnrollmentRecord(
     string Id, string StudentId, string CourseCode, DateTime EnrolledAt);
+public class TmsDatabaseException(string message) : Exception(message);
