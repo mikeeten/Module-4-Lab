@@ -22,6 +22,8 @@ builder.Services.AddSingleton<IEnrollmentService, EnrollmentService>();
 
 builder.Services.AddControllers();
 
+builder.Services.AddProblemDetails();
+
 builder.Host.UseDefaultServiceProvider(options =>
 {
     options.ValidateScopes = true;
@@ -32,7 +34,8 @@ builder.Host.UseDefaultServiceProvider(options =>
 var app = builder.Build();
 app.UseMiddleware<RequestLoggingMiddleware>(); 
 
-app.UseExceptionHandler("/error");
+app.UseExceptionHandler("/api/error");
+app.UseStatusCodePages();
 app.UseRouting();
 app.UseAuthentication();   // establish identity
 app.UseAuthorization();    // enforce policies
@@ -45,6 +48,11 @@ app.MapGet("/api/assessments/results", () => Results.Ok(new
     studentId = "S-001",
     letterGrade = "A"
 })).RequireAuthorization(); 
+
+app.MapGet("/api/error", () =>
+{
+    throw new TmsDatabaseException("Simulated database failure for ProblemDetails testing");
+});
 
 app.Run();
 
